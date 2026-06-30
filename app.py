@@ -119,9 +119,12 @@ if not db_data.empty:
     with left_col:
         st.subheader(f"📈 Historical Price Movement: {selected_stock}")
         # Fetching historical chart data dynamically
-        hist_df = yf.download(selected_stock, start=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'))
-        if not hist_df.empty:
-            st.line_chart(hist_df['Close'])
+     hist_df = yf.download(selected_stock, start=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'))
+if not hist_df.empty:
+    # Flatten multi-index columns if they exist so Streamlit can read it
+    if isinstance(hist_df.columns, pd.MultiIndex):
+        hist_df.columns = hist_df.columns.get_level_values(0)
+    st.line_chart(hist_df['Close'])
             
     with right_col:
         st.subheader("📋 Core Fundamentals (Database Records)")
