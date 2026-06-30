@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import sqlite3
+import time
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="FinPulse MVP", layout="wide")
@@ -14,9 +15,9 @@ TICKERS = [
     "KOTAKBANK.NS", "TITAN.NS", "AXISBANK.NS", "ADANIENT.NS", "ULTRACEMCO.NS"
 ]
 
-# 1. DATABASE INITIALIZATION (Fresh v3 Database)
+# 1. DATABASE INITIALIZATION
 def init_db():
-    conn = sqlite3.connect("finpulse_v3.db")
+    conn = sqlite3.connect("finpulse_v4.db")
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS stocks (
@@ -32,19 +33,18 @@ def init_db():
 
 init_db()
 
-# 2. BULLETPROOF SYNC LOGIC
+# 2. RATE-LIMITED SYNC LOGIC
 def sync_data():
-    conn = sqlite3.connect("finpulse_v3.db")
+    conn = sqlite3.connect("finpulse_v4.db")
     cursor = conn.cursor()
-    with st.spinner("Syncing with Yahoo Finance ..."):
+    with st.spinner("Syncing data with Yahoo Finance (applying 1s delay to bypass API rate limits)..."):
         for t in TICKERS:
+            time.sleep(1)
             try:
-                # Use safer history call to guarantee price data
                 stock = yf.Ticker(t)
                 hist = stock.history(period="1d")
                 price = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
                 
-                # Wrap .info in its own try block since it is strictly rate-limited
                 try:
                     info = stock.info
                     mcap = info.get("marketCap", 0.0)
@@ -56,18 +56,17 @@ def sync_data():
                 cursor.execute("INSERT OR REPLACE INTO stocks VALUES (?, ?, ?, ?, ?)", 
                                (t, price, mcap, pe, eps))
             except:
-                # Absolute fallback: if everything fails, insert zeroes so UI never breaks
                 cursor.execute("INSERT OR REPLACE INTO stocks VALUES (?, ?, ?, ?, ?)", 
                                (t, 0.0, 0.0, 0.0, 0.0))
     conn.commit()
     conn.close()
-    st.sidebar.success("Sync Complete!")
+    st.sidebar.success("Sync Complete.")
 
 if st.sidebar.button("🔄 Sync Live Data"):
     sync_data()
 
 # 3. LOAD DATA
-conn = sqlite3.connect("finpulse_v3.db")
+conn = sqlite3.connect("finpulse_v4.db")
 df = pd.read_sql_query("SELECT * FROM stocks", conn)
 conn.close()
 
