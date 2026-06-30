@@ -36,7 +36,7 @@ init_db()
 def sync_data():
     conn = sqlite3.connect("finpulse_v3.db")
     cursor = conn.cursor()
-    with st.spinner("Syncing with Yahoo Finance (Safe Mode)..."):
+    with st.spinner("Syncing with Yahoo Finance ..."):
         for t in TICKERS:
             try:
                 # Use safer history call to guarantee price data
