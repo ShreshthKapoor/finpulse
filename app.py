@@ -4,7 +4,6 @@ import yfinance as yf
 import sqlite3
 from datetime import datetime, timedelta
 
-# 1. INITIAL SETUP
 st.set_page_config(page_title="FinPulse MVP", layout="wide")
 st.title("📈 FinPulse: Core Market Tracker")
 
@@ -15,9 +14,9 @@ TICKERS = [
     "KOTAKBANK.NS", "TITAN.NS", "AXISBANK.NS", "ADANIENT.NS", "ULTRACEMCO.NS"
 ]
 
-# 2. DATABASE INITIALIZATION (Clean Slate)
+# 1. DATABASE INITIALIZATION (Fresh v3 Database)
 def init_db():
-    conn = sqlite3.connect("finpulse_v2.db")
+    conn = sqlite3.connect("finpulse_v3.db")
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS stocks (
@@ -33,22 +32,33 @@ def init_db():
 
 init_db()
 
-# 3. SIMPLE SYNC LOGIC
+# 2. BULLETPROOF SYNC LOGIC
 def sync_data():
-    conn = sqlite3.connect("finpulse_v2.db")
+    conn = sqlite3.connect("finpulse_v3.db")
     cursor = conn.cursor()
-    with st.spinner("Syncing with Yahoo Finance..."):
+    with st.spinner("Syncing with Yahoo Finance (Safe Mode)..."):
         for t in TICKERS:
             try:
-                info = yf.Ticker(t).info
-                price = info.get("currentPrice", info.get("previousClose", 0.0))
-                mcap = info.get("marketCap", 0.0)
-                pe = info.get("trailingPE", 0.0)
-                eps = info.get("trailingEps", 0.0)
+                # Use safer history call to guarantee price data
+                stock = yf.Ticker(t)
+                hist = stock.history(period="1d")
+                price = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
+                
+                # Wrap .info in its own try block since it is strictly rate-limited
+                try:
+                    info = stock.info
+                    mcap = info.get("marketCap", 0.0)
+                    pe = info.get("trailingPE", 0.0)
+                    eps = info.get("trailingEps", 0.0)
+                except:
+                    mcap, pe, eps = 0.0, 0.0, 0.0
+                
                 cursor.execute("INSERT OR REPLACE INTO stocks VALUES (?, ?, ?, ?, ?)", 
                                (t, price, mcap, pe, eps))
             except:
-                pass # If one stock fails, just skip it and keep going
+                # Absolute fallback: if everything fails, insert zeroes so UI never breaks
+                cursor.execute("INSERT OR REPLACE INTO stocks VALUES (?, ?, ?, ?, ?)", 
+                               (t, 0.0, 0.0, 0.0, 0.0))
     conn.commit()
     conn.close()
     st.sidebar.success("Sync Complete!")
@@ -56,12 +66,12 @@ def sync_data():
 if st.sidebar.button("🔄 Sync Live Data"):
     sync_data()
 
-# Load Data for Display
-conn = sqlite3.connect("finpulse_v2.db")
+# 3. LOAD DATA
+conn = sqlite3.connect("finpulse_v3.db")
 df = pd.read_sql_query("SELECT * FROM stocks", conn)
 conn.close()
 
-# 4. REQUIRED REST API ENDPOINTS
+# 4. API ENDPOINTS
 st.sidebar.markdown("---")
 st.sidebar.header("📡 API Endpoints")
 api_choice = st.sidebar.selectbox("Test Endpoint:", ["None", "/stocks", "/stocks/{ticker}", "/market-summary"])
@@ -80,12 +90,12 @@ elif api_choice == "/market-summary":
     })
 
 # 5. USER INTERFACE
+selected = st.selectbox("Select Company to Analyze:", TICKERS)
+
 if not df.empty:
-    selected = st.selectbox("Select Company to Analyze:", TICKERS)
     stock_data = df[df['ticker'] == selected]
     
     if not stock_data.empty:
-        # Display Core Metrics
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Current Price", f"₹{stock_data['price'].values[0]:,.2f}")
         c2.metric("P/E Ratio", f"{stock_data['pe_ratio'].values[0]:.2f}")
@@ -93,18 +103,22 @@ if not df.empty:
         c4.metric("Market Cap (Cr)", f"₹{stock_data['market_cap'].values[0]/10000000:,.2f}")
         
         st.markdown("---")
-        
-        # Display Chart
         st.subheader(f"Historical 1-Year Chart: {selected}")
-        hist = yf.download(selected, start=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'), progress=False)
-        if not hist.empty:
-            # Flatten multi-index columns for Streamlit compatibility
-            if isinstance(hist.columns, pd.MultiIndex):
-                hist.columns = hist.columns.get_level_values(0)
-            st.line_chart(hist['Close'])
+        try:
+            chart_data = yf.download(selected, start=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'), progress=False)
+            if not chart_data.empty:
+                if isinstance(chart_data.columns, pd.MultiIndex):
+                    chart_data.columns = chart_data.columns.get_level_values(0)
+                st.line_chart(chart_data['Close'])
+            else:
+                st.warning("Chart data temporarily unavailable from Yahoo Finance.")
+        except:
+            st.warning("Chart data temporarily unavailable from Yahoo Finance.")
         
         st.markdown("---")
         st.subheader("Raw Database View")
         st.dataframe(df, use_container_width=True)
+    else:
+        st.warning(f"Data for {selected} is missing. Please click 'Sync Live Data' again.")
 else:
     st.info("👈 Click 'Sync Live Data' in the sidebar to populate the dashboard.")
